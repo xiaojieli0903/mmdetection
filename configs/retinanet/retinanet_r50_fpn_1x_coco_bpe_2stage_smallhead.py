@@ -8,7 +8,7 @@ _base_ = [
 
 optim_wrapper = dict(
     optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0001),
-    clip_grad=dict(max_norm=30, norm_type=2)
+    clip_grad=dict(max_norm=10, norm_type=2, error_if_nonfinite=True)
 )
 
 train_cfg_bbox_head=dict(
@@ -137,10 +137,10 @@ model = dict(
                             final_cls=False,
                             nobp_type='layer_mergestem',
                             loss_weight_bpe=0,
-                            loss_weight_bpe_final=1,
+                            loss_weight_bpe_final=0.0000001,
                             classifier_type='v1',
-                            stages_classifier=[1, 2, 3],
-                            idx_middle_block=[2, 3, 5, 2],
+                            stages_classifier=[2, 3],
+                            idx_middle_block=[2, 3, 2, 2],
                             loss_weight_infopro=0,
                             bbox_head=[
                                 bbox_head_1,

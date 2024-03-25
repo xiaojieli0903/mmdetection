@@ -1101,6 +1101,12 @@ class ResNet(BaseModule):
             return [out, None]
 
     def forward_layer(self, x, idx_layer=0, reforward=False, data_samples=None):
+        if len(self.stage_blocks) == 2:
+            detach_index = [0, 1]
+            detach_index_1 = [1, 2]
+        elif len(self.stage_blocks) == 3:
+            detach_index = [0, 1, 2]
+            detach_index_1 = [1, 2, 3]
         if len(self.stage_blocks) == self.num_stages:
             module = getattr(self, f'layer{idx_layer + 1}')
             if isinstance(x, list):
@@ -1137,9 +1143,9 @@ class ResNet(BaseModule):
                                     x = getattr(self, f'layer{idx}')[
                                         idx_block](x)
                                 if isinstance(x, list):
-                                    self.feats_middle[idx - 1] = x[0].detach() if idx in [1,2,3] else x[0] 
+                                    self.feats_middle[idx - 1] = x[0].detach() if idx in detach_index_1 else x[0] 
                                 else:
-                                    self.feats_middle[idx - 1] = x.detach() if idx in [1,2,3] else x 
+                                    self.feats_middle[idx - 1] = x.detach() if idx in detach_index_1 else x 
                             for idx_block in range(0, idx_middle_block[0] + 1):
                                 if isinstance(x, list):
                                     x.append(data_samples)
@@ -1149,9 +1155,9 @@ class ResNet(BaseModule):
                                     idx_block](x)
                                 if idx_block == num_blocks - 1:
                                     if isinstance(x, list):
-                                        self.feats_middle[idx] = x[0].detach() if idx in [0,1,2] else x[0] 
+                                        self.feats_middle[idx] = x[0].detach() if idx in detach_index else x[0] 
                                     else:
-                                        self.feats_middle[idx] = x.detach() if idx in [0,1,2] else x 
+                                        self.feats_middle[idx] = x.detach() if idx in detach_index else x 
                         else:
                             for idx_block in range(idx_middle_block[0] + 1,
                                                    idx_middle_block[1] + 1):
@@ -1163,9 +1169,9 @@ class ResNet(BaseModule):
                                     idx_block](x)
                                 if idx_block == num_blocks - 1:
                                     if isinstance(x, list):
-                                        self.feats_middle[idx] = x[0].detach() if idx in [0,1,2] else x[0] 
+                                        self.feats_middle[idx] = x[0].detach() if idx in detach_index else x[0] 
                                     else:
-                                        self.feats_middle[idx] = x.detach() if idx in [0,1,2] else x 
+                                        self.feats_middle[idx] = x.detach() if idx in detach_index else x 
                     else:
                         if num_blocks_last > idx_middle_block_last + 1:
                             for idx_block in range(idx_middle_block_last + 1,
@@ -1176,10 +1182,10 @@ class ResNet(BaseModule):
                                     x = [x, None, data_samples]
                                 x = getattr(self, f'layer{idx}')[idx_block](x)
                                 if isinstance(x, list):
-                                    self.feats_middle[idx - 1] = x[0].detach() if idx in [1,2,3] else x[0] 
+                                    self.feats_middle[idx - 1] = x[0].detach() if idx in detach_index_1 else x[0] 
                                 else:
-                                    self.feats_middle[idx - 1] = x.detach() if idx in [1,2,3] else x 
-                            self.feats_middle[idx - 1] = x.detach() if idx in [1,2,3] else x 
+                                    self.feats_middle[idx - 1] = x.detach() if idx in detach_index_1 else x 
+                            self.feats_middle[idx - 1] = x.detach() if idx in detach_index_1 else x 
                         for idx_block in range(0, idx_middle_block + 1):
                             if isinstance(x, list):
                                 x.append(data_samples)
@@ -1188,9 +1194,9 @@ class ResNet(BaseModule):
                             x = getattr(self, f'layer{idx + 1}')[idx_block](x)
                             if idx_block == num_blocks - 1:
                                 if isinstance(x, list):
-                                    self.feats_middle[idx] = x[0].detach() if idx in [0,1,2] else x[0] 
+                                    self.feats_middle[idx] = x[0].detach() if idx in detach_index else x[0] 
                                 else:
-                                    self.feats_middle[idx] = x.detach() if idx in [0,1,2] else x 
+                                    self.feats_middle[idx] = x.detach() if idx in detach_index else x 
                 return x
             elif reforward and self.reforward_mode == 'classifier':
                 idx_middle_block = self.idx_middle_block[

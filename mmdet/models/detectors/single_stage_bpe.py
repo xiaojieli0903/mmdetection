@@ -287,24 +287,25 @@ class SingleStageDetectorBPE(BaseDetector):
                                                        inputs=inputs,
                                                        create_graph=True,
                                                        retain_graph=True)[0]
-                    delta_y_cls = torch.autograd.grad(outputs=losses['loss_cls'],
-                                                       inputs=inputs,
-                                                       create_graph=True,
-                                                       retain_graph=True)[0]
+                    # delta_y_cls = torch.autograd.grad(outputs=losses['loss_cls'],
+                    #                                    inputs=inputs,
+                    #                                    create_graph=True,
+                    #                                    retain_graph=True)[0]
                     losses[
                         'loss_bpe_bbox'] = loss_weight_bpe * self.calculate_reg_loss(
                         delta_x_bbox, delta_y_bbox, loss_type_bpe)
-                    losses[
-                        'loss_bpe_cls'] = loss_weight_bpe * self.calculate_reg_loss(
-                        delta_x_cls, delta_y_cls, loss_type_bpe)
+                    # losses[
+                    #     'loss_bpe_cls'] = loss_weight_bpe * self.calculate_reg_loss(
+                    #     delta_x_cls, delta_y_cls, loss_type_bpe)
             if ((not use_reforward) or (
-                    use_reforward and reforward)) and not is_final and idx_layer == 1:
+                    use_reforward and reforward)) and not is_final and idx_layer == (len(self.backbone.stage_blocks) - 2):
                 delta_x_bbox = torch.autograd.grad(outputs=losses['loss_bbox'],
                                                    inputs=out,
                                                    retain_graph=True)[0].detach()
-                delta_x_cls = torch.autograd.grad(outputs=losses['loss_cls'],
-                                              inputs=out,
-                                              retain_graph=True)[0].detach()
+                # delta_x_cls = torch.autograd.grad(outputs=losses['loss_cls'],
+                #                               inputs=out,
+                #                               retain_graph=True)[0].detach()
+                delta_x_cls = None
                 delta_x = [delta_x_bbox, delta_x_cls]
             else:
                 delta_x = None

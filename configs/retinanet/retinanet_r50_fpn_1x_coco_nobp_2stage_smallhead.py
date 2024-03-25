@@ -130,17 +130,17 @@ bbox_head_4=dict(
 model = dict(
     type='RetinaNetBPE',
     backbone=dict(
-        classifier_cfg=dict(use_bpe_reg=True,
+        classifier_cfg=dict(use_bpe_reg=False,
                             inference_eval=False,
                             use_reforward=False,
                             middle_eval=False,
                             final_cls=False,
                             nobp_type='layer_mergestem',
                             loss_weight_bpe=0,
-                            loss_weight_bpe_final=1,
+                            loss_weight_bpe_final=1000,
                             classifier_type='v1',
-                            stages_classifier=[1, 2, 3],
-                            idx_middle_block=[2, 3, 5, 2],
+                            stages_classifier=[2, 3],
+                            idx_middle_block=[2, 3, 2, 2],
                             loss_weight_infopro=0,
                             bbox_head=[
                                 bbox_head_1,
