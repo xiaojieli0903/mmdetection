@@ -77,8 +77,11 @@ class BasicBlock(BaseModule):
                 'loss_weight_infopro', 0)
 
             if self.classifier_cfg is not None:
-                self.auxiliary_classifier = MODELS.build(
-                    self.classifier_cfg.bbox_head)
+                if self.final_cls and self.is_final:
+                    self.auxiliary_classifier = nn.Identity()
+                else:
+                    self.auxiliary_classifier = MODELS.build(
+                        self.classifier_cfg.bbox_head)
 
                 if self.loss_weight_infopro > 0 and not is_final:
                     self.decoder = Decoder(out_channels)
@@ -126,7 +129,10 @@ class BasicBlock(BaseModule):
 
         # Auxiliary classifier operations
         def apply_auxiliary_classifier(x):
-            return self.auxiliary_classifier.loss((x,), data_samples)
+            if self.final_cls and self.is_final:
+                return [None, None]
+            else:
+                return self.auxiliary_classifier.loss((x,), data_samples)
 
         # Check conditions for auxiliary classifier
         if self.classifier_cfg is not None:
@@ -293,51 +299,11 @@ class Bottleneck(BaseModule):
             out_channels = self.after_conv3_plugins
 
         if self.classifier_cfg is not None:
-            self.auxiliary_classifier = MODELS.build(
-                self.classifier_cfg.bbox_head)
-            # if self.final_cls and is_final:
-            #     self.auxiliary_classifier = nn.Identity()
-            # else:
-            #     if self.classifier_type == 'v1':
-                    # self.auxiliary_classifier = nn.Sequential()
-                    # self.auxiliary_reg = nn.Sequential()
-                    # in_channels = out_channels
-                    # for i in range(2):
-                    #     self.auxiliary_classifier.append(
-                    #         ConvModule(
-                    #             in_channels,
-                    #             256,
-                    #             3,
-                    #             stride=1,
-                    #             padding=1,
-                    #             conv_cfg=self.conv_cfg,
-                    #             norm_cfg=self.norm_cfg)
-                    #     )
-                    #     self.auxiliary_reg.append(
-                    #         ConvModule(
-                    #             in_channels,
-                    #             256,
-                    #             3,
-                    #             stride=1,
-                    #             padding=1,
-                    #             conv_cfg=self.conv_cfg,
-                    #             norm_cfg=self.norm_cfg)
-                    #     )
-                    #     in_channels = 256
-                    # self.auxiliary_classifier.append(
-                    #     nn.Conv2d(
-                    #         in_channels,
-                    #         720,
-                    #         3,
-                    #         padding=1)
-                    # )
-                    # self.auxiliary_reg.append(
-                    #     nn.Conv2d(
-                    #         in_channels,
-                    #         36,
-                    #         3,
-                    #         padding=1)
-                    # )
+            if self.final_cls and self.is_final:
+                self.auxiliary_classifier = nn.Identity()
+            else:
+                self.auxiliary_classifier = MODELS.build(
+                    self.classifier_cfg.bbox_head)
 
             if self.loss_weight_infopro > 0 and not is_final:
                 self.decoder = Decoder(out_channels)
@@ -432,7 +398,10 @@ class Bottleneck(BaseModule):
 
         # Auxiliary classifier operations
         def apply_auxiliary_classifier(x):
-            return self.auxiliary_classifier.loss((x, ), data_samples)
+            if self.final_cls and self.is_final:
+                return [None, None]
+            else:
+                return self.auxiliary_classifier.loss((x,), data_samples)
 
         # Check conditions for auxiliary classifier
         if self.classifier_cfg is not None:

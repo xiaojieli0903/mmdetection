@@ -263,22 +263,18 @@ class SingleStageDetectorBPE(BaseDetector):
 
         use_bpe_reg = self.backbone.use_bpe_reg
         use_reforward = self.backbone.use_reforward
-        loss_weight_infopro = self.backbone.loss_weight_infopro
         loss_weight_bpe = self.backbone.loss_weight_bpe if not is_final else self.backbone.loss_weight_bpe_final
         loss_weight_task = self.backbone.loss_weight_task if not is_final else self.backbone.loss_weight_task_final
         loss_type_bpe = self.backbone.loss_type_bpe
 
-        # losses = self.bbox_head.loss(out_cls, data_samples)
-        losses = out_cls
+        if not is_final:
+            losses = out_cls
+        else:
+            losses = self.bbox_head.loss(self.neck(self.backbone.feats_middle), data_samples)
 
-        # if loss_weight_infopro > 0 and out_recon is not None:
-        #     losses['loss_infopro'] = loss_weight_infopro * self.loss_bce(
-        #         out_recon, images_origin)
+        for key in losses:
+            losses[key] = loss_weight_task * losses[key][0]
 
-        if is_final and self.with_neck:
-            losses_fpn = self.bbox_head.loss(self.neck(self.backbone.feats_middle), data_samples)
-            losses['loss_cls_fpn'] = losses_fpn['loss_cls']
-            losses['loss_bbox_fpn'] = losses_fpn['loss_bbox']
         if use_bpe_reg:
             if not reforward and delta_x is not None:
                 if loss_weight_bpe != 0:

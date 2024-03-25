@@ -8,7 +8,7 @@ _base_ = [
 
 optim_wrapper = dict(
     optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0001),
-    clip_grad=dict(max_norm=10, norm_type=2, error_if_nonfinite=True)
+    clip_grad=dict(max_norm=30, norm_type=2)
 )
 
 train_cfg_bbox_head=dict(
@@ -34,8 +34,8 @@ bbox_head_1=dict(
         type='RetinaHead',
         num_classes=80,
         in_channels=256,
-        stacked_convs=2,
-        feat_channels=64,
+        stacked_convs=4,
+        feat_channels=256,
         anchor_generator=dict(
             type='AnchorGenerator',
             octave_base_scale=4,
@@ -58,8 +58,8 @@ bbox_head_2=dict(
         type='RetinaHead',
         num_classes=80,
         in_channels=512,
-        stacked_convs=2,
-        feat_channels=64,
+        stacked_convs=4,
+        feat_channels=256,
         anchor_generator=dict(
             type='AnchorGenerator',
             octave_base_scale=4,
@@ -82,8 +82,8 @@ bbox_head_3=dict(
         type='RetinaHead',
         num_classes=80,
         in_channels=1024,
-        stacked_convs=2,
-        feat_channels=64,
+        stacked_convs=4,
+        feat_channels=256,
         anchor_generator=dict(
             type='AnchorGenerator',
             octave_base_scale=4,
@@ -106,8 +106,8 @@ bbox_head_4=dict(
         type='RetinaHead',
         num_classes=80,
         in_channels=2048,
-        stacked_convs=2,
-        feat_channels=64,
+        stacked_convs=4,
+        feat_channels=256,
         anchor_generator=dict(
             type='AnchorGenerator',
             octave_base_scale=4,
@@ -134,13 +134,15 @@ model = dict(
                             inference_eval=False,
                             use_reforward=False,
                             middle_eval=False,
-                            final_cls=False,
+                            final_cls=True,
                             nobp_type='layer_mergestem',
                             loss_weight_bpe=0,
                             loss_weight_bpe_final=1000,
+                            loss_weight_task=0.1,
+                            loss_weight_task_final=1.0,
                             classifier_type='v1',
-                            stages_classifier=[2, 3],
-                            idx_middle_block=[2, 3, 2, 2],
+                            stages_classifier=[1, 3],
+                            idx_middle_block=[2, 3, 5, 2],
                             loss_weight_infopro=0,
                             bbox_head=[
                                 bbox_head_1,
