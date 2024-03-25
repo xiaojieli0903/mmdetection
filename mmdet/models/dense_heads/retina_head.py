@@ -1,10 +1,15 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import torch
 import torch.nn as nn
 from mmcv.cnn import ConvModule
+from typing import List, Optional, Tuple
+from torch import Tensor
 
 from mmdet.registry import MODELS
 from .anchor_head import AnchorHead
-
+from mmdet.structures import SampleList
+from mmdet.models.utils import (filter_scores_and_topk, select_single_mlvl,
+                     unpack_gt_instances)
 
 @MODELS.register_module()
 class RetinaHead(AnchorHead):
@@ -118,3 +123,28 @@ class RetinaHead(AnchorHead):
         cls_score = self.retina_cls(cls_feat)
         bbox_pred = self.retina_reg(reg_feat)
         return cls_score, bbox_pred
+
+    def loss(self, x: Tuple[Tensor], batch_data_samples: SampleList) -> dict:
+        """Perform forward propagation and loss calculation of the detection
+        head on the features of the upstream network.
+
+        Args:
+            x (tuple[Tensor]): Features from the upstream network, each is
+                a 4D-tensor.
+            batch_data_samples (List[:obj:`DetDataSample`]): The Data
+                Samples. It usually includes information such as
+                `gt_instance`, `gt_panoptic_seg` and `gt_sem_seg`.
+
+        Returns:
+            dict: A dictionary of loss components.
+        """
+        assert isinstance(x, tuple) and isinstance(x[0], torch.Tensor)
+        outs = self(x)
+        outputs = unpack_gt_instances(batch_data_samples)
+        (batch_gt_instances, batch_gt_instances_ignore,
+         batch_img_metas) = outputs
+
+        loss_inputs = outs + (batch_gt_instances, batch_img_metas,
+                              batch_gt_instances_ignore)
+        losses = self.loss_by_feat(*loss_inputs)
+        return losses

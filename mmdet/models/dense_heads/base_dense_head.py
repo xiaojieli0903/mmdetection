@@ -113,7 +113,7 @@ class BaseDenseHead(BaseModule, metaclass=ABCMeta):
             dict: A dictionary of loss components.
         """
         outs = self(x)
-
+        # ([cls_scores_level1, bbox_pred_level1], [cls_scores_level2, bbox_pred_level2], [cls_scores_level3, bbox_pred_level3])
         outputs = unpack_gt_instances(batch_data_samples)
         (batch_gt_instances, batch_gt_instances_ignore,
          batch_img_metas) = outputs

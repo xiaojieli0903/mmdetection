@@ -5,10 +5,12 @@ import torch.nn as nn
 import torch.utils.checkpoint as cp
 from mmcv.cnn import build_conv_layer, build_norm_layer, build_plugin_layer
 from mmengine.model import BaseModule
+from mmengine.model import normal_init
 from torch.nn.modules.batchnorm import _BatchNorm
+from mmcv.cnn import ConvModule
 
 from mmdet.registry import MODELS
-from ..layers import ResLayer
+from mmdet.utils import ConfigType, OptConfigType, OptMultiConfig
 
 
 class BasicBlock(BaseModule):
@@ -26,6 +28,8 @@ class BasicBlock(BaseModule):
                  norm_cfg=dict(type='BN'),
                  dcn=None,
                  plugins=None,
+                 is_final=False,
+                 classifier_cfg=None,
                  init_cfg=None):
         super(BasicBlock, self).__init__(init_cfg)
         assert dcn is None, 'Not implemented yet.'
@@ -54,6 +58,33 @@ class BasicBlock(BaseModule):
         self.dilation = dilation
         self.with_cp = with_cp
 
+        self.classifier_cfg = classifier_cfg
+        self.is_final = is_final
+        if self.classifier_cfg is not None:
+            self.use_bpe_reg = self.classifier_cfg.get('use_bpe_reg', True)
+            self.use_reforward = self.classifier_cfg.get('use_reforward',
+                                                         True)
+            self.inference_eval = self.classifier_cfg.get('inference_eval',
+                                                          False)
+            self.middle_eval = self.classifier_cfg.get('middle_eval',
+                                                       True)
+            self.pooling_size = self.classifier_cfg.get('pooling_size',
+                                                        1)
+            self.final_cls = self.classifier_cfg.get('final_cls', False)
+            self.classifier_type = self.classifier_cfg.get('classifier_type',
+                                                           'v1')
+            self.loss_weight_infopro = self.classifier_cfg.get(
+                'loss_weight_infopro', 0)
+
+            if self.classifier_cfg is not None:
+                self.auxiliary_classifier = MODELS.build(
+                    self.classifier_cfg.bbox_head)
+
+                if self.loss_weight_infopro > 0 and not is_final:
+                    self.decoder = Decoder(out_channels)
+                else:
+                    self.decoder = None
+
     @property
     def norm1(self):
         """nn.Module: normalization layer after the first convolution layer"""
@@ -66,6 +97,8 @@ class BasicBlock(BaseModule):
 
     def forward(self, x):
         """Forward function."""
+        if isinstance(x, list):
+            x, _, data_samples = x
 
         def _inner_forward(x):
             identity = x
@@ -91,7 +124,28 @@ class BasicBlock(BaseModule):
 
         out = self.relu(out)
 
-        return out
+        # Auxiliary classifier operations
+        def apply_auxiliary_classifier(x):
+            return self.auxiliary_classifier.loss((x,), data_samples)
+
+        # Check conditions for auxiliary classifier
+        if self.classifier_cfg is not None:
+            if self.training:
+                # Auxiliary classifier in training mode
+                if self.middle_eval and not self.is_final:
+                    self.auxiliary_classifier.eval()
+                if self.loss_weight_infopro > 0 and self.decoder is not None:
+                    out_recon = self.decoder(out)
+                else:
+                    out_recon = None
+                return [out, [apply_auxiliary_classifier(out), out_recon]]
+            else:
+                # Auxiliary classifier in evaluation mode
+                if not self.is_final:
+                    return out
+                return out
+        else:
+            return out
 
 
 class Bottleneck(BaseModule):
@@ -109,6 +163,8 @@ class Bottleneck(BaseModule):
                  norm_cfg=dict(type='BN'),
                  dcn=None,
                  plugins=None,
+                 is_final=False,
+                 classifier_cfg=None,
                  init_cfg=None):
         """Bottleneck block for ResNet.
 
@@ -135,6 +191,24 @@ class Bottleneck(BaseModule):
         self.with_dcn = dcn is not None
         self.plugins = plugins
         self.with_plugins = plugins is not None
+
+        self.classifier_cfg = classifier_cfg
+        self.is_final = is_final
+        if self.classifier_cfg is not None:
+            self.use_bpe_reg = self.classifier_cfg.get('use_bpe_reg', True)
+            self.use_reforward = self.classifier_cfg.get('use_reforward',
+                                                         True)
+            self.inference_eval = self.classifier_cfg.get('inference_eval',
+                                                          False)
+            self.middle_eval = self.classifier_cfg.get('middle_eval',
+                                                       True)
+            self.pooling_size = self.classifier_cfg.get('pooling_size',
+                                                        1)
+            self.final_cls = self.classifier_cfg.get('final_cls', False)
+            self.classifier_type = self.classifier_cfg.get('classifier_type',
+                                                           'v1')
+            self.loss_weight_infopro = self.classifier_cfg.get(
+                'loss_weight_infopro', 0)
 
         if self.with_plugins:
             # collect plugins for conv1/conv2/conv3
@@ -204,6 +278,7 @@ class Bottleneck(BaseModule):
             kernel_size=1,
             bias=False)
         self.add_module(self.norm3_name, norm3)
+        out_channels = planes * self.expansion
 
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
@@ -215,6 +290,59 @@ class Bottleneck(BaseModule):
                 planes, self.after_conv2_plugins)
             self.after_conv3_plugin_names = self.make_block_plugins(
                 planes * self.expansion, self.after_conv3_plugins)
+            out_channels = self.after_conv3_plugins
+
+        if self.classifier_cfg is not None:
+            self.auxiliary_classifier = MODELS.build(
+                self.classifier_cfg.bbox_head)
+            # if self.final_cls and is_final:
+            #     self.auxiliary_classifier = nn.Identity()
+            # else:
+            #     if self.classifier_type == 'v1':
+                    # self.auxiliary_classifier = nn.Sequential()
+                    # self.auxiliary_reg = nn.Sequential()
+                    # in_channels = out_channels
+                    # for i in range(2):
+                    #     self.auxiliary_classifier.append(
+                    #         ConvModule(
+                    #             in_channels,
+                    #             256,
+                    #             3,
+                    #             stride=1,
+                    #             padding=1,
+                    #             conv_cfg=self.conv_cfg,
+                    #             norm_cfg=self.norm_cfg)
+                    #     )
+                    #     self.auxiliary_reg.append(
+                    #         ConvModule(
+                    #             in_channels,
+                    #             256,
+                    #             3,
+                    #             stride=1,
+                    #             padding=1,
+                    #             conv_cfg=self.conv_cfg,
+                    #             norm_cfg=self.norm_cfg)
+                    #     )
+                    #     in_channels = 256
+                    # self.auxiliary_classifier.append(
+                    #     nn.Conv2d(
+                    #         in_channels,
+                    #         720,
+                    #         3,
+                    #         padding=1)
+                    # )
+                    # self.auxiliary_reg.append(
+                    #     nn.Conv2d(
+                    #         in_channels,
+                    #         36,
+                    #         3,
+                    #         padding=1)
+                    # )
+
+            if self.loss_weight_infopro > 0 and not is_final:
+                self.decoder = Decoder(out_channels)
+            else:
+                self.decoder = None
 
     def make_block_plugins(self, in_channels, plugins):
         """make plugins for block.
@@ -263,6 +391,9 @@ class Bottleneck(BaseModule):
     def forward(self, x):
         """Forward function."""
 
+        if isinstance(x, list):
+            x, _, data_samples = x
+
         def _inner_forward(x):
             identity = x
             out = self.conv1(x)
@@ -299,7 +430,201 @@ class Bottleneck(BaseModule):
 
         out = self.relu(out)
 
-        return out
+        # Auxiliary classifier operations
+        def apply_auxiliary_classifier(x):
+            return self.auxiliary_classifier.loss((x, ), data_samples)
+
+        # Check conditions for auxiliary classifier
+        if self.classifier_cfg is not None:
+            if self.training:
+                # Auxiliary classifier in training mode
+                if self.middle_eval and not self.is_final:
+                    self.auxiliary_classifier.eval()
+                if self.loss_weight_infopro > 0 and self.decoder is not None:
+                    out_recon = self.decoder(out)
+                else:
+                    out_recon = None
+                return [out, [apply_auxiliary_classifier(out), out_recon]]
+            else:
+                # Auxiliary classifier in evaluation mode
+                if not self.is_final:
+                    return out
+                return out
+        else:
+            return out
+
+
+class ResLayer(nn.Sequential):
+    """ResLayer to build ResNet style backbone.
+
+    Args:
+        block (nn.Module): block used to build ResLayer.
+        inplanes (int): inplanes of block.
+        planes (int): planes of block.
+        num_blocks (int): number of blocks.
+        stride (int): stride of the first block. Defaults to 1
+        avg_down (bool): Use AvgPool instead of stride conv when
+            downsampling in the bottleneck. Defaults to False
+        conv_cfg (dict): dictionary to construct and config conv layer.
+            Defaults to None
+        norm_cfg (dict): dictionary to construct and config norm layer.
+            Defaults to dict(type='BN')
+        downsample_first (bool): Downsample at the first block or last block.
+            False for Hourglass, True for ResNet. Defaults to True
+    """
+
+    def __init__(self,
+                 block: BaseModule,
+                 inplanes: int,
+                 planes: int,
+                 num_blocks: int,
+                 stride: int = 1,
+                 avg_down: bool = False,
+                 conv_cfg: OptConfigType = None,
+                 norm_cfg: ConfigType = dict(type='BN'),
+                 downsample_first: bool = True,
+                 is_final=False,
+                 **kwargs) -> None:
+        self.block = block
+
+        self.classifier_cfg = kwargs.pop('classifier_cfg', None)
+        nobp_type = self.classifier_cfg.get('nobp_type',
+                                            'block') if self.classifier_cfg else 'block'
+        idx_layer = kwargs.pop('idx_layer', None)
+        stages_classifier = kwargs.pop('stages_classifier', None)  # [1, 3]
+        idx_middle_block = kwargs.pop('idx_middle_block', None)  # [2, 2]
+
+        downsample = None
+        if stride != 1 or inplanes != planes * block.expansion:
+            downsample = []
+            conv_stride = stride
+            if avg_down:
+                conv_stride = 1
+                downsample.append(
+                    nn.AvgPool2d(
+                        kernel_size=stride,
+                        stride=stride,
+                        ceil_mode=True,
+                        count_include_pad=False))
+            downsample.extend([
+                build_conv_layer(
+                    conv_cfg,
+                    inplanes,
+                    planes * block.expansion,
+                    kernel_size=1,
+                    stride=conv_stride,
+                    bias=False),
+                build_norm_layer(norm_cfg, planes * block.expansion)[1]
+            ])
+            downsample = nn.Sequential(*downsample)
+
+        if self.classifier_cfg is not None:
+            import copy
+            classifier_cfg = copy.deepcopy(self.classifier_cfg)
+            classifier_cfg['bbox_head'] = self.classifier_cfg['bbox_head'][idx_layer]
+        else:
+            classifier_cfg = None
+        if downsample_first:
+            layers = []
+            _has_classifier = classifier_cfg is not None and (
+                    nobp_type in ['block'] or
+                    ((idx_middle_block[idx_layer] == 0) and nobp_type in [
+                        'layer',
+                        'layer_mergestem']
+                     ))
+            layers.append(
+                block(
+                    inplanes=inplanes,
+                    planes=planes,
+                    stride=stride,
+                    downsample=downsample,
+                    conv_cfg=conv_cfg,
+                    norm_cfg=norm_cfg,
+                    classifier_cfg=classifier_cfg if _has_classifier else None,
+                    is_final=(num_blocks == 1) and is_final,
+                    **kwargs))
+            inplanes = planes * block.expansion
+            for i in range(1, num_blocks):
+                if isinstance(idx_middle_block[idx_layer], list):
+                    _has_classifier = classifier_cfg is not None and (
+                            nobp_type in ['block'] or
+                            (i in idx_middle_block[
+                                idx_layer] and nobp_type in ['layer',
+                                                             'layer_mergestem']
+                             ))
+                else:
+                    _has_classifier = classifier_cfg is not None and (
+                            nobp_type in ['block'] or
+                            (i == idx_middle_block[
+                                idx_layer] and nobp_type in [
+                                 'layer',
+                                 'layer_mergestem']
+                             ))
+                layers.append(
+                    block(
+                        inplanes=inplanes,
+                        planes=planes,
+                        stride=1,
+                        conv_cfg=conv_cfg,
+                        norm_cfg=norm_cfg,
+                        is_final=(i == (num_blocks - 1)) and is_final,
+                        classifier_cfg=classifier_cfg if _has_classifier else None,
+                        **kwargs))
+
+        else:  # downsample_first=False is for HourglassModule
+            for i in range(num_blocks - 1):
+                if isinstance(idx_middle_block[idx_layer], list):
+                    _has_classifier = classifier_cfg is not None and (
+                            nobp_type in ['block'] or
+                            (i in idx_middle_block[
+                                idx_layer] and nobp_type in ['layer',
+                                                             'layer_mergestem']
+                             ))
+                else:
+                    _has_classifier = classifier_cfg is not None and (
+                            nobp_type in ['block'] or
+                            (i == idx_middle_block[
+                                idx_layer] and nobp_type in [
+                                 'layer',
+                                 'layer_mergestem']
+                             ))
+                layers.append(
+                    block(
+                        inplanes=inplanes,
+                        planes=inplanes,
+                        stride=1,
+                        conv_cfg=conv_cfg,
+                        norm_cfg=norm_cfg,
+                        is_final=(i == (num_blocks - 1)) and is_final,
+                        classifier_cfg=classifier_cfg if _has_classifier else None,
+                        **kwargs))
+            if isinstance(idx_middle_block[idx_layer], list):
+                _has_classifier = classifier_cfg is not None and (
+                        nobp_type in ['block'] or
+                        ((num_blocks - 1) in idx_middle_block[
+                            idx_layer] and nobp_type in ['layer',
+                                                         'layer_mergestem']
+                         ))
+            else:
+                _has_classifier = classifier_cfg is not None and (
+                        nobp_type in ['block'] or
+                        ((num_blocks - 1) == idx_middle_block[
+                            idx_layer] and nobp_type in [
+                             'layer',
+                             'layer_mergestem']
+                         ))
+            layers.append(
+                block(
+                    inplanes=inplanes,
+                    planes=planes,
+                    stride=stride,
+                    downsample=downsample,
+                    conv_cfg=conv_cfg,
+                    norm_cfg=norm_cfg,
+                    classifier_cfg=classifier_cfg if _has_classifier else None,
+                    is_final=is_final,
+                    **kwargs))
+        super().__init__(*layers)
 
 
 @MODELS.register_module()
@@ -351,7 +676,7 @@ class ResNet(BaseModule):
         >>> inputs = torch.rand(1, 3, 32, 32)
         >>> level_outputs = self.forward(inputs)
         >>> for level_out in level_outputs:
-        ...     print(tuple(level_out.shape))
+        ...     # print(tuple(level_out.shape))
         (1, 64, 8, 8)
         (1, 128, 4, 4)
         (1, 256, 2, 2)
@@ -388,7 +713,8 @@ class ResNet(BaseModule):
                  with_cp=False,
                  zero_init_residual=True,
                  pretrained=None,
-                 init_cfg=None):
+                 init_cfg=None,
+                 classifier_cfg=None):
         super(ResNet, self).__init__(init_cfg)
         self.zero_init_residual = zero_init_residual
         if depth not in self.arch_settings:
@@ -454,6 +780,90 @@ class ResNet(BaseModule):
         self.stage_blocks = stage_blocks[:num_stages]
         self.inplanes = stem_channels
 
+        self.classifier_cfg = classifier_cfg
+        if self.classifier_cfg is not None:
+            self.use_nobp = True
+            self.nobp_type = self.classifier_cfg.get('nobp_type', 'block')
+            self.use_bpe_reg = self.classifier_cfg.get('use_bpe_reg', True)
+            self.use_reforward = self.classifier_cfg.get('use_reforward',
+                                                         True)
+            self.inference_eval = self.classifier_cfg.get('inference_eval',
+                                                          False)
+            self.middle_eval = self.classifier_cfg.get('middle_eval',
+                                                       True)
+            self.pooling_size = self.classifier_cfg.get('pooling_size',
+                                                        1)
+            self.final_cls = self.classifier_cfg.get('final_cls', False)
+            self.loss_weight_bpe = self.classifier_cfg.get('loss_weight_bpe',
+                                                           1.0)
+            self.loss_weight_bpe_final = self.classifier_cfg.get(
+                'loss_weight_bpe_final',
+                self.loss_weight_bpe)
+            self.classifier_type = self.classifier_cfg.get('classifier_type',
+                                                           'v1')
+            self.stages_classifier = self.classifier_cfg.get(
+                'stages_classifier',
+                range(len(self.stage_blocks)))
+            self.idx_middle_block = self.classifier_cfg.get('idx_middle_block',
+                                                            [num_block - 1 for
+                                                             num_block in
+                                                             self.stage_blocks])
+            self.loss_weight_infopro = self.classifier_cfg.get(
+                'loss_weight_infopro', 0)
+            self.loss_weight_task = self.classifier_cfg.get('loss_weight_task',
+                                                            1.0)
+            self.loss_weight_task_final = self.classifier_cfg.get(
+                'loss_weight_task_final',
+                self.loss_weight_task)
+            self.loss_type_bpe = self.classifier_cfg.get('loss_type_bpe',
+                                                         'mse')
+            self.update_classifier = self.classifier_cfg.get(
+                'update_classifier', False)
+            self.idx_stop = self.classifier_cfg.get('idx_stop', -1)
+            self.reforward_mode = self.classifier_cfg.get('reforward_mode',
+                                                          'classifier')
+        else:
+            self.classifier_cfg = {}
+            self.use_nobp = False
+            self.nobp_type = self.classifier_cfg.get('nobp_type', 'block')
+            self.use_bpe_reg = self.classifier_cfg.get('use_bpe_reg', False)
+            self.use_reforward = self.classifier_cfg.get('use_reforward',
+                                                         False)
+            self.inference_eval = self.classifier_cfg.get('inference_eval',
+                                                          False)
+            self.middle_eval = self.classifier_cfg.get('middle_eval',
+                                                       False)
+            self.pooling_size = self.classifier_cfg.get('pooling_size',
+                                                        1)
+            self.final_cls = self.classifier_cfg.get('final_cls', False)
+            self.loss_weight_bpe = self.classifier_cfg.get('loss_weight_bpe',
+                                                           1.0)
+            self.loss_weight_bpe_final = self.classifier_cfg.get(
+                'loss_weight_bpe_final',
+                self.loss_weight_bpe)
+            self.stages_classifier = self.classifier_cfg.get(
+                'stages_classifier',
+                range(len(self.stage_blocks)))
+            self.idx_middle_block = self.classifier_cfg.get('idx_middle_block',
+                                                            [num_block - 1 for
+                                                             num_block in
+                                                             self.stage_blocks])
+            self.loss_weight_infopro = self.classifier_cfg.get(
+                'loss_weight_infopro', 0)
+            self.loss_weight_task = self.classifier_cfg.get('loss_weight_task',
+                                                            1.0)
+            self.loss_weight_task_final = self.classifier_cfg.get(
+                'loss_weight_task_final',
+                self.loss_weight_task)
+            self.loss_type_bpe = self.classifier_cfg.get('loss_type_bpe',
+                                                         'mse')
+            self.update_classifier = self.classifier_cfg.get(
+                'update_classifier', False)
+            self.idx_stop = self.classifier_cfg.get('idx_stop', -1)
+            self.reforward_mode = self.classifier_cfg.get('reforward_mode',
+                                                          'classifier')
+            self.classifier_cfg = None
+
         self._make_stem_layer(in_channels, stem_channels)
 
         self.res_layers = []
@@ -466,6 +876,11 @@ class ResNet(BaseModule):
             else:
                 stage_plugins = None
             planes = base_channels * 2**i
+
+            _has_classifier = self.classifier_cfg is not None and (
+                    (self.nobp_type in ['layer',
+                                        'layer_mergestem']
+                     and i in self.stages_classifier) or self.nobp_type == 'block')
             res_layer = self.make_res_layer(
                 block=self.block,
                 inplanes=self.inplanes,
@@ -480,11 +895,31 @@ class ResNet(BaseModule):
                 norm_cfg=norm_cfg,
                 dcn=dcn,
                 plugins=stage_plugins,
-                init_cfg=block_init_cfg)
+                init_cfg=block_init_cfg,
+                classifier_cfg=self.classifier_cfg if _has_classifier else None,
+                is_final=False if i != (len(self.stage_blocks) - 1) else True,
+                idx_layer=i,
+                stages_classifier=self.stages_classifier,
+                idx_middle_block=self.idx_middle_block
+            )
+
             self.inplanes = planes * self.block.expansion
             layer_name = f'layer{i + 1}'
             self.add_module(layer_name, res_layer)
             self.res_layers.append(layer_name)
+
+        self.feats_middle = [None for i in range(len(self.stage_blocks))]
+
+        if self.classifier_cfg is not None and self.nobp_type in ['layer',
+                                                                  'layer_mergestem']:
+            idx_pre = 0
+            stage_blocks_new = []
+            for idx in self.stages_classifier:
+                stage_blocks_new.append(
+                    sum(self.stage_blocks[idx_pre:(idx + 1)]))
+                idx_pre = idx + 1
+            self.stage_blocks_origin = self.stage_blocks
+            self.stage_blocks = stage_blocks_new
 
         self._freeze_stages()
 
@@ -644,6 +1079,125 @@ class ResNet(BaseModule):
             if i in self.out_indices:
                 outs.append(x)
         return tuple(outs)
+
+    def forward_stem(self, x):
+        if self.deep_stem:
+            out = self.stem(x)
+        else:
+            out = self.conv1(x)
+            out = self.norm1(out)
+            out = self.relu(out)
+        out = self.maxpool(out)
+
+        if self.classifier_cfg is not None and self.training and self.nobp_type != 'layer_mergestem':
+            if self.middle_eval:
+                self.auxiliary_classifier.eval()
+                self.auxiliary_classifier_linear.eval()
+            out_cls = self.auxiliary_classifier(out)
+            out_cls = self.auxiliary_classifier_linear(
+                out_cls.view(out_cls.shape[0], -1))
+            return [out, out_cls]
+        else:
+            return [out, None]
+
+    def forward_layer(self, x, idx_layer=0, reforward=False, data_samples=None):
+        if len(self.stage_blocks) == self.num_stages:
+            module = getattr(self, f'layer{idx_layer + 1}')
+            if isinstance(x, list):
+                x.append(data_samples)
+            else:
+                x = [x, None, data_samples]
+            x = module(x)
+            self.feats_middle[idx_layer] = x.detach() if not isinstance(x, list) else x[0].detach()
+            return x
+        else:
+            if not reforward or (reforward and self.reforward_mode == 'all'):
+                idx_start = 0 if idx_layer < 1 else self.stages_classifier[
+                                                        idx_layer - 1] + 1
+                if idx_start >= len(self.stage_blocks_origin):
+                    idx_start -= 1
+                for idx in range(idx_start,
+                                 self.stages_classifier[idx_layer] + 1):
+                    num_blocks = self.stage_blocks_origin[idx]
+                    num_blocks_last = self.stage_blocks_origin[
+                        idx - 1] if idx > 0 else -1
+                    idx_middle_block_last = self.idx_middle_block[
+                        idx - 1] if idx > 0 else -1
+                    idx_middle_block = self.idx_middle_block[idx]
+                    if isinstance(idx_middle_block, list):
+                        if idx_layer != len(self.stage_blocks) - 1:
+                            if num_blocks_last > idx_middle_block_last + 1:
+                                for idx_block in range(
+                                        idx_middle_block_last + 1,
+                                        num_blocks_last):
+                                    if isinstance(x, list):
+                                        x.append(data_samples)
+                                    else:
+                                        x = [x, None, data_samples]
+                                    x = getattr(self, f'layer{idx}')[
+                                        idx_block](x)
+                                if isinstance(x, list):
+                                    self.feats_middle[idx - 1] = x[0].detach() if idx in [1,2,3] else x[0] 
+                                else:
+                                    self.feats_middle[idx - 1] = x.detach() if idx in [1,2,3] else x 
+                            for idx_block in range(0, idx_middle_block[0] + 1):
+                                if isinstance(x, list):
+                                    x.append(data_samples)
+                                else:
+                                    x = [x, None, data_samples]
+                                x = getattr(self, f'layer{idx + 1}')[
+                                    idx_block](x)
+                                if idx_block == num_blocks - 1:
+                                    if isinstance(x, list):
+                                        self.feats_middle[idx] = x[0].detach() if idx in [0,1,2] else x[0] 
+                                    else:
+                                        self.feats_middle[idx] = x.detach() if idx in [0,1,2] else x 
+                        else:
+                            for idx_block in range(idx_middle_block[0] + 1,
+                                                   idx_middle_block[1] + 1):
+                                if isinstance(x, list):
+                                    x.append(data_samples)
+                                else:
+                                    x = [x, None, data_samples]
+                                x = getattr(self, f'layer{idx + 1}')[
+                                    idx_block](x)
+                                if idx_block == num_blocks - 1:
+                                    if isinstance(x, list):
+                                        self.feats_middle[idx] = x[0].detach() if idx in [0,1,2] else x[0] 
+                                    else:
+                                        self.feats_middle[idx] = x.detach() if idx in [0,1,2] else x 
+                    else:
+                        if num_blocks_last > idx_middle_block_last + 1:
+                            for idx_block in range(idx_middle_block_last + 1,
+                                                   num_blocks_last):
+                                if isinstance(x, list):
+                                    x.append(data_samples)
+                                else:
+                                    x = [x, None, data_samples]
+                                x = getattr(self, f'layer{idx}')[idx_block](x)
+                                if isinstance(x, list):
+                                    self.feats_middle[idx - 1] = x[0].detach() if idx in [1,2,3] else x[0] 
+                                else:
+                                    self.feats_middle[idx - 1] = x.detach() if idx in [1,2,3] else x 
+                            self.feats_middle[idx - 1] = x.detach() if idx in [1,2,3] else x 
+                        for idx_block in range(0, idx_middle_block + 1):
+                            if isinstance(x, list):
+                                x.append(data_samples)
+                            else:
+                                x = [x, None, data_samples]
+                            x = getattr(self, f'layer{idx + 1}')[idx_block](x)
+                            if idx_block == num_blocks - 1:
+                                if isinstance(x, list):
+                                    self.feats_middle[idx] = x[0].detach() if idx in [0,1,2] else x[0] 
+                                else:
+                                    self.feats_middle[idx] = x.detach() if idx in [0,1,2] else x 
+                return x
+            elif reforward and self.reforward_mode == 'classifier':
+                idx_middle_block = self.idx_middle_block[
+                    self.stages_classifier[idx_layer]]
+                x = getattr(self, f'layer{self.stages_classifier[idx_layer] + 1}')[
+                    idx_middle_block](x, mode='classifier')
+                return x
 
     def train(self, mode=True):
         """Convert the model into training mode while keep normalization layer

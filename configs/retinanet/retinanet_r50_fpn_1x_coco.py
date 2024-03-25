@@ -7,4 +7,12 @@ _base_ = [
 
 # optimizer
 optim_wrapper = dict(
-    optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0001))
+    optimizer=dict(type='SGD', lr=0.01, momentum=0.9, weight_decay=0.0001),
+    clip_grad=dict(max_norm=100, norm_type=2)
+)
+
+find_unused_parameters=True
+env_cfg = dict(
+    cudnn_benchmark=False,
+    dist_cfg=dict(backend='nccl'),
+    mp_cfg=dict(mp_start_method='spawn', opencv_num_threads=0))
