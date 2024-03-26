@@ -271,9 +271,12 @@ class SingleStageDetectorBPE(BaseDetector):
             losses = out_cls
         else:
             losses = self.bbox_head.loss(self.neck(self.backbone.feats_middle), data_samples)
-
         for key in losses:
-            losses[key] = loss_weight_task * losses[key][0]
+            if isinstance(losses[key], list):
+                for i in range(len(losses[key])):
+                    losses[key][i] = loss_weight_task * losses[key][i]
+            else:
+                losses[key] = loss_weight_task * losses[key]
 
         if use_bpe_reg:
             if not reforward and delta_x is not None:
