@@ -129,38 +129,15 @@ bbox_head_4=dict(
 # model
 model = dict(
     type='RetinaNetBPE',
-    bbox_head=dict(
-        type='RetinaHead',
-        num_classes=80,
-        in_channels=256,
-        stacked_convs=4,
-        feat_channels=256,
-        anchor_generator=dict(
-            type='AnchorGenerator',
-            octave_base_scale=4,
-            scales_per_octave=3,
-            ratios=[0.5, 1.0, 2.0],
-            strides=[8, 16, 32, 64, 128]),
-        bbox_coder=dict(
-            type='DeltaXYWHBBoxCoder',
-            target_means=[.0, .0, .0, .0],
-            target_stds=[1.0, 1.0, 1.0, 1.0]),
-        loss_cls=dict(
-            type='FocalLoss',
-            use_sigmoid=True,
-            gamma=2.0,
-            alpha=0.25,
-            loss_weight=1.0),
-        loss_bbox=dict(type='L1Loss', loss_weight=1.0)),
     backbone=dict(
-        classifier_cfg=dict(use_bpe_reg=False,
+        classifier_cfg=dict(use_bpe_reg=True,
                             inference_eval=False,
                             use_reforward=False,
                             middle_eval=False,
                             final_cls=True,
                             nobp_type='layer_mergestem',
                             loss_weight_bpe=0,
-                            loss_weight_bpe_final=1000,
+                            loss_weight_bpe_final=0.0001,
                             loss_weight_task=0.1,
                             loss_weight_task_final=1.0,
                             classifier_type='v1',

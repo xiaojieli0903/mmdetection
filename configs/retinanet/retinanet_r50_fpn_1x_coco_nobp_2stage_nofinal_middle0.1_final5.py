@@ -51,8 +51,8 @@ bbox_head_1=dict(
             use_sigmoid=True,
             gamma=2.0,
             alpha=0.25,
-            loss_weight=1.0),
-        loss_bbox=dict(type='L1Loss', loss_weight=1.0), train_cfg=train_cfg_bbox_head, test_cfg=test_cfg_bbox_head)
+            loss_weight=5.0),
+        loss_bbox=dict(type='L1Loss', loss_weight=5.0), train_cfg=train_cfg_bbox_head, test_cfg=test_cfg_bbox_head)
 
 bbox_head_2=dict(
         type='RetinaHead',
